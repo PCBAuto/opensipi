@@ -10,7 +10,6 @@ Description:
     This module serves as the platform of the OpenSIPI application.
 """
 
-
 import glob
 import os
 import shutil
@@ -18,6 +17,7 @@ import shutil
 import jinja2
 import pdfkit
 from pdfme import build_pdf
+from mdutils import MdUtils
 
 from opensipi import __version__
 from opensipi.constants.CONSTANTS import (
@@ -347,6 +347,40 @@ class Platform:
         self.lg.debug("A summary report is created at " + dir)
         return dir
 
+    def report_markdown(self, result_config_dir, report_config_dir):
+        """Generate a Markdown report out of the processed results."""
+        report_config = load_yaml_to_dict(expand_home_dir(report_config_dir))
+        report_type = report_config["report_type"]
+
+        output_list = []
+        if report_type in ["PDN", "IO"]:
+            result_dict = self.process_snp(expand_home_dir(result_config_dir))
+            for key, val in result_dict.items():
+                output_list.extend(val)
+        elif report_type in ["DCR"]:
+            pass
+
+        summary_list = [
+            ["Simulation Start Time", report_config["sim_date"]],
+            ["Author", report_config["usr_id"]],
+            ["Project Name", report_config["proj_name"]],
+            ["Extraction Tool", report_config["xtract_tool"]],
+            ["Extraction Type", report_config["xtract_type"]],
+            ["Design File", report_config["dsn_name"]],
+        ]
+
+        md_dir = expand_home_dir(report_config["report_full_path"]).replace(".pdf", ".md")
+        if report_type == "PDN":
+            return self.__gen_pdn_markdown_report(summary_list, output_list, md_dir)
+        elif report_type == "IO":
+            return self.__gen_io_markdown_report(summary_list, output_list, md_dir)
+        elif report_type == "DCR":
+            # Add DCR-specific markdown logic if needed
+            with open(md_dir, "w", encoding="utf-8") as f:
+                pass
+        self.lg.debug("A summary report is created at " + md_dir)
+        return md_dir
+        
     def report_html(self, result_config_dir, report_config_dir):
         """Generate a HTML report out of the processed results."""
         # load report config file
@@ -627,6 +661,161 @@ class Platform:
                                 i += 1
         with open(dir, "wb") as f:
             build_pdf(pdf_report, f)
+
+    def __gen_pdn_markdown_report(self, summary_list, output_list, md_dir):
+        """Generate a Markdown report for PDN using output_list, with table and figures. """
+        md = MdUtils(file_name=md_dir, title="PDN Report")
+        # Add summary section with table
+        md.new_header(level=1, title="Summary")
+        summary_headers = ["", ""]
+        summary_data = []
+        for item in summary_list:
+            summary_data.extend(item)
+        md.new_table(
+            columns=2,
+            rows=len(summary_list)+1,
+            text=summary_headers+summary_data,
+            text_align='left'
+        )
+
+        # Add results section with table
+        md.new_header(level=1, title="Results")
+        results_headers = ["Name", "DCR (mOhm)", "L@100MHz (pH)", "C@10kHz (uF)", "Figure"]
+        results_data = []
+        fig_refs = []
+        for i, item in enumerate(output_list, start=1):
+            fig_label = f"Fig.{i}"
+            anchor = f"fig{i}-{item[0].lower().replace(' ', '-')}"
+            results_data.extend([
+                item[0],  # Name
+                str(item[2]),  # Value1
+                str(item[3]),  # Value2
+                str(item[4]),  # Value3
+                md.new_inline_link(link=f"#{anchor}", text=fig_label)
+            ])
+            fig_refs.append((fig_label, item[0], item[1], anchor))
+        md.new_table(
+            columns=5,
+            rows=len(output_list)+1,
+            text=results_headers+results_data,
+            text_align='center'
+        )
+
+        # Add figures section
+        md.new_header(level=1, title="Figures")
+        for fig_label, name, image_path, anchor in fig_refs:
+            md.new_header(level=2, title=f"{fig_label} {name}", add_table_of_contents='n')
+            md.new_line(md.new_inline_link(link=f"#{anchor}", text=" "))  # Anchor for figure reference
+            # Add image to markdown
+            if os.path.exists(image_path):
+                rel_path = os.path.relpath(image_path, os.path.dirname(md_dir))
+                md.new_line(md.new_inline_image(text=f"{fig_label}", path=rel_path))
+            else:
+                md.new_line(f"Image file not found: {image_path}")
+            md.new_line()
+        md.create_md_file()
+
+    def __gen_io_markdown_report(self, summary_list, output_list, md_dir):
+        """Generate a Markdown report for IO with separate IL and RL tables (Title and Figure only), paired figures, and correct image linking."""
+        from mdutils import MdUtils
+        import os
+
+        md = MdUtils(file_name=md_dir, title="IO Report")
+        # Add summary section with table
+        md.new_header(level=1, title="Summary")
+        summary_headers = ["", ""]
+        summary_data = []
+        for item in summary_list:
+            summary_data.extend(item)
+        md.new_table(
+            columns=2,
+            rows=len(summary_list)+1,
+            text=summary_headers+summary_data,
+            text_align='left'
+        )
+
+        # Categorize output_list into IL and RL, and pair them by parameter name
+        il_dict = {}
+        rl_dict = {}
+        for sub_list in output_list:
+            for item in sub_list:
+                title = item[0]
+                image_path = item[1]
+                # Determine if IL or RL by filename or title
+                if (title.lower().endswith('il') or 'il' in os.path.basename(image_path).lower()):
+                    il_dict[title] = image_path
+                elif (title.lower().endswith('rl') or 'rl' in os.path.basename(image_path).lower()):
+                    rl_dict[title] = image_path
+        # Pair IL and RL by matching base parameter name (remove _IL/_RL or -IL/-RL)
+        pairs = []
+        for il_title in il_dict:
+            base = il_title.rsplit('_IL', 1)[0].rsplit('-IL', 1)[0]
+            rl_title = base + '_RL'
+            if rl_title not in rl_dict:
+                rl_title = base + '-RL'
+            if rl_title not in rl_dict:
+                rl_title = next((k for k in rl_dict if k.startswith(base)), None)
+            pairs.append((il_title, rl_title))
+
+        # IL Table
+        md.new_header(level=1, title="IL Results")
+        il_headers = ["Title", "IL Figure"]
+        il_table = il_headers[:]
+        il_fig_refs = []
+        fig_count = 1
+        for il_title, rl_title in pairs:
+            if il_title in il_dict:
+                image_path = il_dict[il_title]
+                anchor = f"fig{fig_count}-{il_title.lower().replace(' ', '-')}"
+                fig_label = f"Fig.{fig_count}"
+                il_table.extend([
+                    il_title,
+                    md.new_inline_link(link=f"#{anchor}", text=fig_label)
+                ])
+                il_fig_refs.append((fig_label, il_title, image_path, anchor))
+                fig_count += 1
+        md.new_table(
+            columns=2,
+            rows=(len(il_table)//2),
+            text=il_table,
+            text_align='center'
+        )
+
+        # RL Table
+        md.new_header(level=1, title="RL Results")
+        rl_headers = ["Title", "RL Figure"]
+        rl_table = rl_headers[:]
+        rl_fig_refs = []
+        for il_title, rl_title in pairs:
+            if rl_title and rl_title in rl_dict:
+                image_path = rl_dict[rl_title]
+                anchor = f"fig{fig_count}-{rl_title.lower().replace(' ', '-')}"
+                fig_label = f"Fig.{fig_count}"
+                rl_table.extend([
+                    rl_title,
+                    md.new_inline_link(link=f"#{anchor}", text=fig_label)
+                ])
+                rl_fig_refs.append((fig_label, rl_title, image_path, anchor))
+                fig_count += 1
+        md.new_table(
+            columns=2,
+            rows=(len(rl_table)//2),
+            text=rl_table,
+            text_align='center'
+        )
+
+        # Add figures section, alternating IL/RL pairs
+        md.new_header(level=1, title="Figures")
+        for (fig_label, name, image_path, anchor) in il_fig_refs + rl_fig_refs:
+            md.new_header(level=2, title=f"{fig_label} {name}", add_table_of_contents='n')
+            md.new_line(md.new_inline_link(link=f"#{anchor}", text=" "))
+            if os.path.exists(image_path):
+                rel_path = os.path.relpath(image_path, os.path.dirname(md_dir))
+                md.new_line(md.new_inline_image(text=f"{fig_label}", path=rel_path))
+            else:
+                md.new_line(f"Image file not found: {image_path}")
+            md.new_line()
+        md.create_md_file()
 
     def __gen_pdn_html_report(
         self, summary_list, result_dict, misc_dict, dir, pdn_report_temp="PDN_Type1.html"

@@ -10,7 +10,6 @@ Description:
     This module contains all top-level integrated flows.
 """
 
-
 from opensipi.sipi_infra import Platform
 
 
@@ -25,7 +24,8 @@ def sim2report(input_info, mntr_info):
     pf.drop_dsn_file(xtract_tool)
     sim_exec = pf.parser(pf.input_data)
     result_config_dir, report_config_dir = pf.run(sim_exec, mntr_info)
-    report_dir = pf.report(result_config_dir, report_config_dir)
+    # report_dir = pf.report(result_config_dir, report_config_dir)
+    report_dir = pf.report_markdown(result_config_dir, report_config_dir)
     return report_dir
 
 
