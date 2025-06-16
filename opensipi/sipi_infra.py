@@ -10,14 +10,6 @@ Description:
     This module serves as the platform of the OpenSIPI application.
 """
 
-"""
-Last modified: June 10, 2025 (Daniel Yeung)
-
-Description:
-    Added a report_markdown function (plus gen_pdn and gen_io methods) to generate report in md rather than pdf
-"""
-
-
 import glob
 import os
 import shutil

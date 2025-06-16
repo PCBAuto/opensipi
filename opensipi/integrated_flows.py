@@ -9,11 +9,6 @@ Last updated on Jan. 5, 2024
 Description:
     This module contains all top-level integrated flows.
 """
-"""
-Last modified: June 10, 2025 (Daniel Yeung)
-Description:
-    Changed report_dir to generate markdown instead of pdf
-"""
 
 from opensipi.sipi_infra import Platform
 
